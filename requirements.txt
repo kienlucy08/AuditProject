@@ -1,0 +1,4 @@
+psycopg2-binary>=2.9
+requests>=2.31
+PyYAML>=6.0
+pytest>=8.0

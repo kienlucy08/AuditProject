@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Platform Audit</title>
+<style>
+:root{--bg:#fff;--fg:#1c2430;--mut:#64748b;--line:#e2e8f0;--card:#f8fafc;--add:#15803d;--rem:#b91c1c;--chg:#b45309;--acc:#2563eb;--accfg:#fff;--warnbg:#fef3c7}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f172a;--fg:#e2e8f0;--mut:#94a3b8;--line:#1e293b;--card:#16213a;--add:#4ade80;--rem:#f87171;--chg:#fbbf24;--acc:#60a5fa;--accfg:#0b1220;--warnbg:#3a2f0b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif;padding:20px 16px 80px;max-width:1150px;margin:auto}
+h1{font-size:22px;margin:0}.mut{color:var(--mut)}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.tiles{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;min-width:120px}.tile b{display:block;font-size:20px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:8px;flex-wrap:wrap}
+.tab{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;color:var(--mut);font:inherit;cursor:pointer}
+.tab[aria-selected=true]{color:var(--fg);border-color:var(--acc);font-weight:600}
+.tab .n{background:var(--card);border:1px solid var(--line);border-radius:99px;padding:0 7px;margin-left:4px;font-size:12px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+input,select,textarea,button{font:inherit;color:var(--fg)}
+input[type=search],select,textarea,input[type=date]{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+button.b{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button.b:hover{border-color:var(--acc)}button.p{background:var(--acc);color:var(--accfg);border-color:var(--acc)}
+button:disabled{opacity:.5;cursor:default}
+.wrap{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600;font-size:12px;white-space:nowrap}td.act{white-space:nowrap;text-align:right}
+.pill{border-radius:99px;padding:1px 8px;font-size:12px;border:1px solid currentColor;white-space:nowrap}
+.added,.readded,.reactivated{color:var(--add)}.removed,.deactivated{color:var(--rem)}.changed{color:var(--chg)}
+.bad{color:var(--rem)}.tag{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--mut)}
+.note{background:var(--warnbg);border-radius:6px;padding:8px 12px;margin:10px 0}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);padding:18px;width:min(520px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chip{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:2px 10px;cursor:pointer;font-size:13px}
+textarea{width:100%;min-height:70px}.row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;align-items:center}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.on{opacity:1}
+.sel{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 0;display:none;gap:10px;align-items:center}
+</style></head><body>
+<div class="top">
+  <div><h1>Platform Audit</h1><div class="mut" id="sub"></div></div>
+  <div><button class="b" id="refresh" hidden>Refresh from platforms</button></div>
+</div>
+<div class="note" id="ro" hidden>Read-only export. Run <code>python -m audit serve</code> to record decisions from this page.</div>
+<div class="tiles" id="tiles"></div>
+<div class="tabs" role="tablist" id="tabs"></div>
+<div class="bar">
+  <input type="search" id="q" placeholder="Search email, org, reason" size="30">
+  <select id="fp"><option value="">All platforms</option></select>
+  <label><input type="checkbox" id="fi" checked> Internal (FieldSync / Murphy Tower) only</label>
+  <span id="extra"></span>
+</div>
+<div class="wrap"><table id="tbl"></table></div>
+<div class="sel" id="selbar"><b id="selcount"></b>
+  <button class="b p" id="keepsel">Keep selected…</button><button class="b" id="clearsel">Clear</button></div>
+
+<dialog id="dlg"><form method="dialog" id="frm">
+  <h3 id="dt" style="margin:0 0 4px"></h3><div class="mut" id="dwho"></div>
+  <div class="chips" id="chips"></div>
+  <textarea id="reason" placeholder="Reason (required)" required></textarea>
+  <div id="revw" style="margin-top:10px">Revisit on <select id="rev">
+    <option value="">never</option><option value="3">in 3 months</option><option value="6">in 6 months</option><option value="12">in 12 months</option></select></div>
+  <div class="row"><span class="bad" id="derr"></span><button class="b" value="cancel" formnovalidate>Cancel</button><button class="b p" id="dsave" value="ok">Save</button></div>
+</form></dialog>
+<div id="toast"></div>
+
+<script>
+let D=__DATA__;const LIVE=D===null;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const EXIT=["removed","deactivated"];
+let tab="stale",sel=new Map();
+const key=r=>r.platform+"\t"+r.email;
+
+async function post(path,body){
+  const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;}
+async function load(){D=await(await fetch("/api/data")).json();draw();}
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("on");setTimeout(()=>t.classList.remove("on"),2200);}
+
+const vis=x=>(!$("fi").checked||x.internal)&&(!$("fp").value||(x.platform===$("fp").value||(x.left||[]).some(l=>l.platform===$("fp").value)));
+const hay=(...a)=>a.join(" ").toLowerCase();
+const match=s=>!$("q").value||s.includes($("q").value.toLowerCase());
+const ago=r=>r.last_login?`${esc(r.last_login.slice(0,10))} <span class="mut">(${r.days_since}d ago)</span>`
+  :`<span class="bad">no login recorded</span>`;
+const who=r=>`${r.name?esc(r.name)+"<br>":""}<span ${r.name?'class="mut"':''}>${esc(r.email)}</span>${r.internal?"":' <span class="tag">external</span>'}`;
+const exitNeedsReason=e=>EXIT.includes(e.event_type)&&!e.reason;
+
+function lists(){
+  const q=match;
+  return {
+    stale:D.stale.filter(r=>vis(r)&&q(hay(r.email,r.name,(r.orgs||[]).join(" ")))),
+    kept:D.kept.filter(r=>vis(r)&&q(hay(r.email,r.name,r.keep_reason,(r.orgs||[]).join(" ")))),
+    watch:D.watchlist.filter(r=>vis(r)&&q(hay(r.email,r.name,r.left.map(l=>l.reason).join(" ")))),
+    recent:(D.recent_exits||[]).filter(e=>vis(e)&&q(hay(e.email,e.name,e.org,e.reason))),
+    reasons:D.events.filter(e=>exitNeedsReason(e)&&vis(e)&&q(hay(e.email,e.name))),
+    events:D.events.filter(e=>vis(e)&&q(hay(e.email,e.name,e.reason,e.field,e.new_value,e.old_value))&&(!$("ft")||!$("ft").value||e.event_type===$("ft").value)),
+  };
+}
+
+function draw(){
+  $("ro").hidden=LIVE;$("refresh").hidden=!LIVE;
+  $("sub").textContent=D.last_snapshot?`Last snapshot ${D.last_snapshot} UTC · stale after ${D.thresholds.internal}d (internal) / ${D.thresholds.external}d (external)`:"No snapshot recorded yet";
+  const plats=Object.keys(D.totals);
+  if($("fp").options.length===1)plats.forEach(p=>$("fp").insertAdjacentHTML("beforeend",`<option>${esc(p)}</option>`));
+  const L=lists();
+  $("tiles").innerHTML=Object.entries(D.totals).map(([p,n])=>`<div class="tile"><b>${n}</b>people on ${esc(p)}</div>`).join("")+
+    `<div class="tile"><b>${L.stale.length}</b>need a decision</div><div class="tile"><b>${L.watch.length}</b>to remove elsewhere</div>`;
+  const T=[["stale","Needs decision",L.stale.length],["kept","Approved to stay",L.kept.length],["recent",`Recent exits (${D.recent_exit_days||60}d)`,L.recent.length],["watch","Removal watchlist",L.watch.length],["reasons","Exits needing reason",L.reasons.length],["events","Activity",L.events.length]];
+  $("tabs").innerHTML=T.map(([k,l,n])=>`<button class="tab" role="tab" aria-selected="${k===tab}" data-t="${k}">${l}<span class="n">${n}</span></button>`).join("");
+  document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{tab=b.dataset.t;sel.clear();draw();});
+  $("extra").innerHTML=tab==="events"?`<select id="ft"><option value="">All events</option>${[...new Set(D.events.map(e=>e.event_type))].sort().map(t=>`<option ${window._ft===t?"selected":""}>${t}</option>`).join("")}</select>`:"";
+  if($("ft"))$("ft").onchange=e=>{window._ft=e.target.value;draw();};
+  const fx=tab==="events"&&window._ft?D.events.filter(e=>vis(e)&&match(hay(e.email,e.name,e.reason,e.field,e.new_value,e.old_value))&&e.event_type===window._ft):L.events;
+  L.events=fx;
+  const A=(l)=>LIVE?l:"";
+  let h="";
+  if(tab==="stale"){
+    h=`<tr>${LIVE?'<th><input type="checkbox" id="all"></th>':""}<th>Person</th><th>Platform / orgs</th><th>Last login</th><th></th></tr>`+
+      L.stale.map(r=>`<tr>${LIVE?`<td><input type="checkbox" class="cb" data-k="${esc(key(r))}" ${sel.has(key(r))?"checked":""}></td>`:""}<td>${who(r)}</td>
+      <td>${esc(r.platform)}<br><span class="mut">${(r.orgs||[]).map(esc).join(", ")}</span></td><td>${ago(r)}</td>
+      <td class="act">${A(`<button class="b" data-keep="${esc(key(r))}">Keep…</button>`)}</td></tr>`).join("")||empty("Nobody needs a decision.");
+  }else if(tab==="kept"){
+    h=`<tr><th>Person</th><th>Platform / orgs</th><th>Last login</th><th>Why OK</th><th>Revisit</th><th></th></tr>`+
+      L.kept.map(r=>`<tr><td>${who(r)}</td><td>${esc(r.platform)}<br><span class="mut">${(r.orgs||[]).map(esc).join(", ")}</span></td><td>${ago(r)}</td>
+      <td>${esc(r.keep_reason)}</td><td>${esc(r.review_after?.slice(0,10)||"")}</td><td class="act">${A(`<button class="b" data-unkeep="${esc(key(r))}">Undo</button>`)}</td></tr>`).join("")||empty("No approved exceptions yet.");
+  }else if(tab==="recent"){
+    const still=e=>Object.entries(e.still_active).map(([p,o])=>`${esc(p)}${o.length?`: <span class="mut">${o.map(esc).join(", ")}</span>`:""}`).join("<br>");
+    h=`<tr><th>Left</th><th>Person</th><th>From</th><th>Still active on</th><th>Why</th><th></th></tr>`+
+      L.recent.map(e=>`<tr><td>${esc(e.detected_at.slice(0,10))}${e.approx?' <span class="tag" title="Date taken from the record\'s last-edited time, not observed">approx</span>':""}<br><span class="mut">${e.days_ago}d ago</span></td>
+      <td>${who(e)}</td><td>${esc(e.platform)}${e.org?`<br><span class="mut">${esc(e.org)}</span>`:""}<br><span class="pill ${e.event_type}">${e.event_type}</span></td>
+      <td>${e.left_platform?'<span class="bad">nothing: left the platform</span>':still(e)}</td>
+      <td>${e.reason?esc(e.reason)+` <span class="mut">(${e.reason_source})</span>`:'<span class="bad">needed</span>'}</td>
+      <td class="act">${A(`<button class="b" data-reason="${e.id}">${e.reason?"Edit":"Add"} reason…</button>`)}</td></tr>`).join("")||empty(`Nobody has left in the last ${D.recent_exit_days||60} days (as far as snapshots have seen).`);
+  }else if(tab==="watch"){
+    h=`<tr><th>Person</th><th>Left</th><th>Why</th><th>Still active on (remove)</th><th></th></tr>`+
+      L.watch.map(r=>`<tr><td>${who(r)}</td>
+      <td>${r.left.map(l=>`${esc(l.platform)} <span class="pill ${l.type}">${l.type}</span><br><span class="mut">${esc(l.when)}</span>`).join("<br>")}</td>
+      <td>${r.left.map(l=>l.reason?esc(l.reason):'<span class="bad">no reason recorded</span>').join("<br>")}</td>
+      <td>${r.remove_from.map(esc).join(", ")}</td>
+      <td class="act">${A(r.remove_from.map(p=>`<button class="b" data-resolve="${esc(r.email)}\t${esc(p)}">Removed from ${esc(p)}</button>`).join(" "))}</td></tr>`).join("")||empty("Nothing to action.");
+  }else{
+    const rows=tab==="reasons"?L.reasons:L.events;
+    h=`<tr><th>Detected</th><th>Platform</th><th>Person</th><th>Event</th><th>Change</th><th>Why</th><th></th></tr>`+
+      rows.map(e=>`<tr><td>${esc(e.detected_at)}</td><td>${esc(e.platform)}</td><td>${who(e)}</td>
+      <td><span class="pill ${e.event_type}">${e.event_type}</span></td>
+      <td>${e.field?esc(e.field)+": "+esc(e.old_value)+" → "+esc(e.new_value):""}</td>
+      <td>${e.reason?esc(e.reason)+` <span class="mut">(${e.reason_source})</span>`:(EXIT.includes(e.event_type)?'<span class="bad">needed</span>':"")}</td>
+      <td class="act">${A(`<button class="b" data-reason="${e.id}">${e.reason?"Edit":"Add"} reason…</button>`)}</td></tr>`).join("")||empty("No events yet. Events appear after the second snapshot.");
+  }
+  $("tbl").innerHTML=h;wire(L);
+}
+const empty=m=>`<tr><td class="mut" style="padding:20px">${m}</td></tr>`;
+
+function wire(L){
+  const t=$("tbl");
+  t.querySelectorAll("[data-keep]").forEach(b=>b.onclick=()=>openKeep([b.dataset.keep]));
+  t.querySelectorAll(".cb").forEach(c=>c.onchange=()=>{c.checked?sel.set(c.dataset.k,1):sel.delete(c.dataset.k);bar();});
+  const all=$("all");if(all)all.onchange=()=>{L.stale.forEach(r=>all.checked?sel.set(key(r),1):sel.delete(key(r)));draw();};
+  t.querySelectorAll("[data-unkeep]").forEach(b=>b.onclick=async()=>{const[p,e]=b.dataset.unkeep.split("\t");await act(()=>post("/api/unkeep",{email:e,platform:p}),"Moved back to needs decision");});
+  t.querySelectorAll("[data-resolve]").forEach(b=>b.onclick=async()=>{const[e,p]=b.dataset.resolve.split("\t");await act(()=>post("/api/resolve",{email:e,platform:p}),"Marked removed");});
+  t.querySelectorAll("[data-reason]").forEach(b=>b.onclick=()=>openReason(+b.dataset.reason));
+  bar();
+}
+function bar(){const n=sel.size;$("selbar").style.display=n&&tab==="stale"?"flex":"none";$("selcount").textContent=n+" selected";}
+$("clearsel").onclick=()=>{sel.clear();draw();};
+$("keepsel").onclick=()=>openKeep([...sel.keys()]);
+
+async function act(fn,msg){try{await fn();sel.clear();await load();toast(msg);}catch(e){toast("Error: "+e.message);}}
+
+const KEEP_CHIPS=["Demo / manager access, logs in rarely","Executive oversight","Support access to customer org","Seasonal / project-based user","Shared service account"];
+const CHANGE_CHIPS=["License downgraded to save cost","Role change","Moved teams","Requested by manager","Cleanup / audit"];
+const EXIT_CHIPS=["Left the company","Contract ended","Customer offboarded","Role change, no longer needs access","Duplicate account"];
+let onSave=null;
+function ask({title,who,chips,review,onsave,initial=""}){
+  $("dt").textContent=title;$("dwho").textContent=who;$("reason").value=initial;$("derr").textContent="";
+  $("revw").hidden=!review;$("rev").value="";
+  $("chips").innerHTML=chips.map(c=>`<span class="chip">${esc(c)}</span>`).join("");
+  $("chips").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{$("reason").value=c.textContent;$("reason").focus();});
+  onSave=onsave;$("dlg").showModal();$("reason").focus();
+}
+$("frm").addEventListener("submit",async ev=>{
+  if(ev.submitter?.value!=="ok"){return;}
+  ev.preventDefault();const r=$("reason").value.trim();if(!r){$("derr").textContent="Reason required";return;}
+  let review="";const m=$("rev").value;if(m){const d=new Date();d.setMonth(d.getMonth()+ +m);review=d.toISOString().slice(0,10);}
+  $("dlg").close();await onSave(r,review);
+});
+function openKeep(keys){
+  const names=keys.map(k=>k.split("\t")[1]);
+  ask({title:keys.length>1?`Keep ${keys.length} people`:"Keep this person",who:names.length>3?names.slice(0,3).join(", ")+` and ${names.length-3} more`:names.join(", "),
+    chips:KEEP_CHIPS,review:true,
+    onsave:(reason,review)=>act(()=>post("/api/keep",{items:keys.map(k=>{const[p,e]=k.split("\t");return{platform:p,email:e};}),reason,review_after:review}),`Saved ${keys.length} decision${keys.length>1?"s":""}`)});
+}
+function openReason(id){
+  const e=D.events.find(x=>x.id===id);
+  const isExit=EXIT.includes(e.event_type);
+  ask({title:isExit?"Why did they leave?":"Why did this change?",who:`${e.email} · ${e.platform} · ${e.event_type}${e.field?" ("+e.field+")":""}`,chips:isExit?EXIT_CHIPS:CHANGE_CHIPS,review:false,initial:e.reason||"",
+    onsave:r=>act(()=>post("/api/reason",{event_id:id,reason:r}),"Reason saved")});
+}
+$("refresh").onclick=async()=>{const b=$("refresh");b.disabled=true;b.textContent="Refreshing…";
+  try{const j=await post("/api/refresh",{});await load();toast(j.ok?"Snapshot complete":"Snapshot had errors: "+j.log.slice(0,160));}
+  catch(e){toast("Error: "+e.message);}b.disabled=false;b.textContent="Refresh from platforms";};
+["q","fp","fi"].forEach(i=>$(i).addEventListener("input",()=>{sel.clear();draw();}));
+if(LIVE)load();else draw();
+</script></body></html>

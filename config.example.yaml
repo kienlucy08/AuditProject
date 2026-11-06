@@ -1,0 +1,72 @@
+# Copy to config.yaml and edit. ${VAR} values are read from environment variables.
+
+database: audit.db          # local SQLite audit log (the history lives here)
+report_dir: reports
+
+# Abort a snapshot if a platform's user count drops by more than this fraction
+# in one run (guards against a failed query/API call being logged as mass removals).
+max_drop_fraction: 0.25
+
+# Primary tracking targets. Everyone else is "external" (demo/manager access etc.).
+internal_domains: [fieldsync.io, murphytower.com]
+
+# "Hasn't logged in" thresholds. External users may legitimately go months without logging in.
+stale_days_internal: 60
+stale_days_external: 180
+
+# "Recent exits" tab window
+recent_exit_days: 60
+
+platforms:
+  # --- FieldSync platform (Postgres, schema fieldsync_identity).
+  # One row per org MEMBERSHIP (a person in 2 orgs = 2 rows), so you see exactly which org
+  # they joined/left/changed role in. Required columns: id, email, name, status.
+  # Optional: reason, last_login. Every other column is tracked as an attribute.
+  # 'pending' (invited, not yet accepted) and 'declined' are excluded: a person shows up as
+  # 'added' when they accept, and 'removed' if their membership row is deleted.
+  fieldsync:
+    type: postgres
+    host: ${PG_HOST}
+    port: ${PG_PORT}
+    dbname: ${PG_DB}
+    user: ${PG_USER}
+    password: ${PG_PASSWORD}
+    query: |
+      SELECT
+        m."accountId"::text || ':' || m."organizationId"::text   AS id,
+        lower(a.email)                                           AS email,
+        btrim(coalesce(a."firstName", '') || ' ' || coalesce(a."lastName", '')) AS name,
+        CASE m.status WHEN 'confirmed' THEN 'active' ELSE 'inactive' END AS status,
+        o.name                                                   AS organization,
+        o.status::text                                           AS org_status,
+        r.name                                                   AS org_role,
+        ar.name                                                  AS access_role,
+        l.ts                                                     AS last_login,
+        CASE WHEN m.status = 'deactivated' THEN m."editedAt" END   AS inactive_since  -- approx. exit date for backfill
+      FROM fieldsync_identity.organization_membership m
+      JOIN fieldsync_identity.account a        ON a.id  = m."accountId"
+      JOIN fieldsync_identity.organization o   ON o.id  = m."organizationId"
+      LEFT JOIN fieldsync_identity.organization_role r ON r.id = m."roleId"
+      LEFT JOIN fieldsync_identity.access_role ar      ON ar.id = m."accessRoleId"
+      LEFT JOIN LATERAL (
+        -- latest sign of life for the ACCOUNT across all its sessions.
+        -- Sessions only exist from ~2026-02-21, so NULL means "no login recorded since then".
+        SELECT max(t) AS ts FROM (
+          SELECT s."lastSeenAt" AS t FROM fieldsync_identity.session s WHERE s."accountId" = a.id
+          UNION ALL
+          SELECT s."createdAt"  FROM fieldsync_identity.session s WHERE s."accountId" = a.id
+          UNION ALL
+          SELECT rt."lastUsedAt" FROM fieldsync_identity.session_refresh_token rt
+            JOIN fieldsync_identity.session s ON s.id = rt."sessionId" WHERE s."accountId" = a.id
+        ) x
+      ) l ON true
+      WHERE m.status IN ('confirmed', 'deactivated')
+
+  # --- ArcGIS Online / Portal members: user type, role, level, disabled flag.
+  arcgis:
+    type: arcgis
+    portal_url: ${ARCGIS_PORTAL_URL}
+    username: ${ARCGIS_USERNAME}
+    password: ${ARCGIS_PASSWORD}
+    # client_id: ${ARCGIS_CLIENT_ID}
+    # client_secret: ${ARCGIS_CLIENT_SECRET}
